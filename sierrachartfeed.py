@@ -126,9 +126,9 @@ def scid_from_csv(data, symbol, volume_precision, log=False):
     for line in data:
         if not line:
             continue
-        
+
         line = line.split(',')
-        
+
         try:
             timestamp, price, volume = int(line[0]), float(line[1]), int(float(line[2])*10**volume_precision)
             if log:
@@ -137,7 +137,7 @@ def scid_from_csv(data, symbol, volume_precision, log=False):
         except ValueError:
             print line
             print "Corrupted data for symbol %s, skipping" % symbol
-        
+
 class ScidHandler(object):
     def __init__(self, symbol, datadir, disable_history, volume_precision, history_length):
         self.symbol = symbol
@@ -151,41 +151,41 @@ class ScidHandler(object):
             except Exception as e:
                 # We don't want to continue; if we receive new data from live feed,
                 # gap inside scid file won't be filled anymore, so we must wait
-                # until historical feed is available again 
+                # until historical feed is available again
                 raise Exception("Historical download failed: %s, use -y to disable history" % str(e))
-        
+
     def load(self):
         print 'Loading data file', self.filename
         if os.path.exists(self.filename):
             self.scid = ScidFile()
             self.scid.load(self.filename)
         else:
-            self.scid = ScidFile.create(self.filename)    
+            self.scid = ScidFile.create(self.filename)
         self.scid.seek(self.scid.length)
-        
+
     def download_historical(self):
         length = self.scid.length
-        
+
         if not length:
             from_timestamp = 0
         else:
             self.scid.seek(self.scid.length-1)
             rec = ScidRecord.from_struct(self.scid.readOne())
             from_timestamp = int(time.mktime(rec.DateTime.timetuple())) + 1
-            
+
         print 'Downloading historical data'
         self.scid.seek(self.scid.length)
         for rec in bitcoincharts_history(self.symbol, from_timestamp, self.volume_precision, self.history_length, True):
             self.scid.write(rec.to_struct())
         self.scid.fp.flush()
-         
-    def ticker_update(self, data):        
+
+    def ticker_update(self, data):
         price = float(data['price'])
         volume = int(float(data['volume'])*10**self.volume_precision)
         date = datetime.fromtimestamp(float(data['timestamp']))
 
         print self.symbol, date, price, float(volume)/10**self.volume_precision
-        
+
         # Datetime, Open, High, Low, Close, NumTrades, TotalVolume, BidVolume, AskVolume):
         try:
             rec = ScidRecord(date, price, price, price, price, 1, volume, 0, 0)
@@ -193,7 +193,7 @@ class ScidHandler(object):
             self.scid.fp.flush()
         except Exception as e:
             print str(e)
-  
+
 def linesplit(sock):
     buffer = ''
     while True:
@@ -201,7 +201,7 @@ def linesplit(sock):
             r = sock.recv(1024)
             if r == '':
                 raise Exception("Socket failed")
-            
+
             buffer = ''.join([buffer, r])
         except Exception as e:
             if str(e) != 'timed out': # Yes, there's not a better way...
@@ -214,12 +214,12 @@ def linesplit(sock):
 class ScidLoader(dict):
     def __init__(self, datadir, disable_history, volume_precision, history_length):
         super(ScidLoader, self).__init__() # Don't use any template dict
-        
+
         self.datadir = datadir
         self.disable_history = disable_history
         self.volume_precision = volume_precision
         self.history_length = history_length
-        
+
     def __getitem__(self, symbol):
         try:
             return dict.__getitem__(self, symbol)
@@ -227,7 +227,7 @@ class ScidLoader(dict):
             handler = ScidHandler(symbol, self.datadir, self.disable_history, self.volume_precision, self.history_length)
             self[symbol] = handler
             return handler
-         
+
 if __name__ == '__main__':
     parser = OptionParser()
     parser.add_option("-d", "--datadir", dest="datadir", default='c:/SierraChart/data/',
@@ -267,14 +267,14 @@ if __name__ == '__main__':
         print "Precision must be between 0 and 8"
         sys.exit()
 
-    # Symbols to watch    
+    # Symbols to watch
     symbols = options.symbols.split(',')
     scids = ScidLoader(options.datadir, options.disable_history, options.precision, options.length)
-            
+
     for s in symbols:
         if s != '*':
             scids[s]
-        
+
     while True:
         try:
             print "Opening streaming socket..."
@@ -283,19 +283,19 @@ if __name__ == '__main__':
             s.connect(BITCOINCHARTS_SOCKET)
             s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             s.send("{\"action\": \"subscribe\", \"channel\": \"tick\"}\n")
-            
+
             for line in linesplit(s):
                 rec = json.loads(line)
                 if not rec['channel'].startswith('tick.'):
                     # Not a tick data
                     continue
-                
+
                 symbol = rec['channel'].rsplit('.')[1]
                 if symbol not in symbols and '*' not in symbols:
                     # Filtering out symbols which user don't want to store
                     # If '*' is in symbols, don't filter anything
                     continue
-                
+
                 #print "%s: %s" % (symbol, rec['payload'])
                 scids[symbol].ticker_update(rec['payload'])
 
@@ -309,6 +309,6 @@ if __name__ == '__main__':
         finally:
             print "Stopping streaming socket..."
             s.close()
-    
+
     for scid in scids.values():
         scid.scid.close()
