@@ -27,7 +27,7 @@ from scid import ScidFile, ScidRecord
 BITCOINCHARTS_TRADES_URL = 'http://api.bitcoincharts.com/v1/trades.csv'
 BITCOINCHARTS_SOCKET = ('bitcoincharts.com', 8002)
 
-def bitcoincharts_history(symbol, from_timestamp, volume_precision, history_length, log=False):
+def bitcoincharts_history(symbol, from_timestamp, volume_precision, history_length, log=False, parse=True):
     # if there is no previous local history, default to downloading
     # history_length days instead of the whole history
     if from_timestamp == 0:
@@ -119,8 +119,12 @@ def bitcoincharts_history(symbol, from_timestamp, volume_precision, history_leng
         chunk = chunk.split("\n")
         history.extend(chunk)
 
-    for rec in scid_from_csv(history, symbol, volume_precision, log):
-        yield rec
+    if parse:
+        for rec in scid_from_csv(history, symbol, volume_precision, log):
+            yield rec
+    else:
+        for t in history:
+            yield t
 
 def scid_from_csv(data, symbol, volume_precision, log=False):
     for line in data:
@@ -242,8 +246,38 @@ if __name__ == '__main__':
                   help="Charts to watch, comma separated. Use * for streaming all markets.")
     parser.add_option("-b", "--bootstrap", dest="bootstrap", default=None, metavar="FILE",
                   help="Bootstrap history from a .csv file")
+    parser.add_option("-c", "--csv", dest="csv", default=None, metavar="FILE",
+                  help="Update a .csv file instead of a .scid.")
 
     (options, args) = parser.parse_args()
+
+    if options.csv:
+        if not os.path.exists(options.csv):
+            print "{} doesn't exist, exiting.".format(options.csv)
+            sys.exit()
+
+        with open(options.csv) as f:
+            data = f.read().strip().split("\n")
+            trades = (t for t in reversed(data) if t)
+            last = next(trades)
+
+        while True:
+            try:
+                timestamp = int(last.split(",")[0]) + 1
+            except ValueError:
+                last = next(trades)
+            else:
+                break
+
+        base_filename, _, _ = options.csv.rpartition('.')
+
+        with open(options.csv, "w") as f:
+            f.write("\n".join(data) + "\n")
+            for tick in bitcoincharts_history(base_filename, timestamp, options.precision, options.length, log=True, parse=False):
+                f.write(tick)
+                f.write("\n")
+
+        sys.exit()
 
     if options.bootstrap:
         base_filename, _, _ = options.bootstrap.rpartition('.')
